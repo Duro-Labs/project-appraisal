@@ -8,8 +8,6 @@ import (
 	"appraisal/internal/model"
 )
 
-const maxParentDepth = 32
-
 type Input struct {
 	Sessions  []model.Session
 	Scopes    map[string]string
@@ -46,16 +44,41 @@ func Build(in Input) ([]*Group, []model.Decision) {
 	for i := range in.Sessions {
 		byID[in.Sessions[i].ID] = &in.Sessions[i]
 	}
+	rootMemo := make(map[string]string, len(byID))
 	rootOf := func(id string) string {
-		cur := id
-		for i := 0; i < maxParentDepth; i++ {
+		if r, ok := rootMemo[id]; ok {
+			return r
+		}
+		var path []string
+		onPath := map[string]int{}
+		cur, root := id, ""
+		for root == "" {
+			if r, ok := rootMemo[cur]; ok {
+				root = r
+				break
+			}
+			if i, ok := onPath[cur]; ok {
+				root = path[i]
+				for _, c := range path[i:] {
+					if c < root {
+						root = c
+					}
+				}
+				break
+			}
+			onPath[cur] = len(path)
+			path = append(path, cur)
 			s := byID[cur]
 			if s == nil || s.ParentID == "" || byID[s.ParentID] == nil {
-				return cur
+				root = cur
+				break
 			}
 			cur = s.ParentID
 		}
-		return cur
+		for _, c := range path {
+			rootMemo[c] = root
+		}
+		return root
 	}
 
 	var stale []model.Decision
@@ -229,10 +252,12 @@ func suggest(titles map[string]int, scope string, first *model.Session) string {
 }
 
 func isAncestor(id string, g *Group, byID map[string]*Group) bool {
-	for i := 0; g != nil && i < maxParentDepth; i++ {
+	seen := map[string]bool{}
+	for g != nil && !seen[g.ID] {
 		if g.ID == id {
 			return true
 		}
+		seen[g.ID] = true
 		g = byID[g.ParentID]
 	}
 	return false

@@ -1,6 +1,7 @@
 package group
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -95,5 +96,45 @@ func TestDetachDropsEarlierMerge(t *testing.T) {
 	gs, _ := Build(in)
 	if groupOf(gs, "b") == groupOf(gs, "c") {
 		t.Fatal("detach must undo an earlier merge")
+	}
+}
+
+func TestDeepParentChain(t *testing.T) {
+	var ss []model.Session
+	for i := 0; i < 40; i++ {
+		parent := ""
+		if i > 0 {
+			parent = fmt.Sprintf("n%02d", i-1)
+		}
+		ss = append(ss, s(fmt.Sprintf("n%02d", i), i, 1, parent))
+	}
+	gs, _ := Build(Input{Sessions: ss})
+	if len(gs) != 1 || len(gs[0].Roots) != 1 || gs[0].Roots[0] != "n00" || len(gs[0].Sessions) != 40 || gs[0].Totals.Total != 40 {
+		t.Fatalf("groups = %+v", gs)
+	}
+}
+
+func TestParentCycle(t *testing.T) {
+	ss := []model.Session{s("x", 1, 1, "z"), s("y", 2, 1, "x"), s("z", 3, 1, "y")}
+	gs, _ := Build(Input{Sessions: ss})
+	if len(gs) != 1 || len(gs[0].Roots) == 0 || len(gs[0].Sessions) != 3 {
+		t.Fatalf("groups = %+v", gs)
+	}
+}
+
+func TestDeepNestCycleIgnored(t *testing.T) {
+	var ss []model.Session
+	var ds []model.Decision
+	for i := 0; i < 35; i++ {
+		ss = append(ss, s(fmt.Sprintf("g%02d", i), i, 1, ""))
+		if i > 0 {
+			ds = append(ds, dec(int64(i), model.DecisionNest, fmt.Sprintf("g%02d", i), fmt.Sprintf("g%02d", i-1), ""))
+		}
+	}
+	ds = append(ds, dec(100, model.DecisionNest, "g00", "g34", ""))
+	gs, _ := Build(Input{Sessions: ss, Decisions: ds})
+	first := groupOf(gs, "g00")
+	if first.ParentID != "" || first.TreeTotal != 35 {
+		t.Fatalf("parent=%q tree=%d", first.ParentID, first.TreeTotal)
 	}
 }
