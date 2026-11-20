@@ -87,9 +87,9 @@ func col(cols map[string]bool, name, fallback string) string {
 }
 
 func readSessions(db *sql.DB, d DB, cols map[string]bool) (map[string]*model.Session, []string, error) {
-	q := fmt.Sprintf(`SELECT id, %s, %s, %s, %s, started_at, %s, %s FROM sessions`,
+	q := fmt.Sprintf(`SELECT id, %s, %s, %s, %s, %s, %s, %s FROM sessions`,
 		col(cols, "parent_session_id", "''"), col(cols, "cwd", "''"), col(cols, "git_branch", "''"),
-		col(cols, "title", "''"), col(cols, "ended_at", "0"), col(cols, "last_activity_at", "0"))
+		col(cols, "title", "''"), col(cols, "started_at", "0"), col(cols, "ended_at", "0"), col(cols, "last_activity_at", "0"))
 	rows, err := db.Query(q)
 	if err != nil {
 		return nil, nil, err
@@ -120,9 +120,9 @@ func readSessions(db *sql.DB, d DB, cols map[string]bool) (map[string]*model.Ses
 }
 
 func readModelUsage(db *sql.DB, d DB, sessions map[string]*model.Session) error {
-	rows, err := db.Query(`SELECT session_id, model, billing_provider, SUM(api_call_count), SUM(input_tokens), SUM(output_tokens),
-		SUM(cache_read_tokens), SUM(cache_write_tokens), SUM(reasoning_tokens)
-		FROM session_model_usage GROUP BY session_id, model, billing_provider`)
+	rows, err := db.Query(`SELECT session_id, COALESCE(model,''), COALESCE(billing_provider,''), COALESCE(SUM(api_call_count),0), COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0),
+		COALESCE(SUM(cache_read_tokens),0), COALESCE(SUM(cache_write_tokens),0), COALESCE(SUM(reasoning_tokens),0)
+		FROM session_model_usage GROUP BY session_id, COALESCE(model,''), COALESCE(billing_provider,'')`)
 	if err != nil {
 		return err
 	}

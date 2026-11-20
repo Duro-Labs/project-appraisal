@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"appraisal/internal/model"
+
 	_ "modernc.org/sqlite"
 )
 
@@ -90,5 +92,47 @@ func TestReadFallsBackToSessionCounters(t *testing.T) {
 		if s.ID == "hermes:default:p1" && (len(s.Usage) != 1 || s.Usage[0].Model != "m1" || s.Usage[0].Input != 10 || s.Usage[0].Calls != 3) {
 			t.Fatalf("fallback usage = %+v", s.Usage)
 		}
+	}
+}
+
+func TestReadToleratesNullColumns(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.db")
+	db, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stmts := []string{
+		`CREATE TABLE sessions (id TEXT PRIMARY KEY, parent_session_id TEXT, cwd TEXT, git_branch TEXT, title TEXT,
+		  started_at REAL, ended_at REAL, last_activity_at REAL, model TEXT, billing_provider TEXT,
+		  input_tokens INTEGER, output_tokens INTEGER, cache_read_tokens INTEGER, cache_write_tokens INTEGER, reasoning_tokens INTEGER, api_call_count INTEGER)`,
+		`CREATE TABLE messages (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT, role TEXT, content TEXT, tool_name TEXT, timestamp REAL)`,
+		`CREATE TABLE session_model_usage (session_id TEXT, model TEXT, billing_provider TEXT, task TEXT, api_call_count INTEGER,
+		  input_tokens INTEGER, output_tokens INTEGER, cache_read_tokens INTEGER, cache_write_tokens INTEGER, reasoning_tokens INTEGER)`,
+		`INSERT INTO sessions (id) VALUES ('n1')`,
+		`INSERT INTO session_model_usage VALUES ('n1','m3',NULL,'',1,NULL,4,NULL,NULL,NULL)`,
+		`INSERT INTO session_model_usage VALUES ('n1',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL)`,
+	}
+	for _, s := range stmts {
+		if _, err := db.Exec(s); err != nil {
+			t.Fatalf("%s: %v", s, err)
+		}
+	}
+	db.Close()
+
+	ss, err := Read(DB{Path: path, Profile: "default"})
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if len(ss) != 1 || !ss[0].StartedAt.IsZero() {
+		t.Fatalf("sessions = %+v", ss)
+	}
+	var m3 *model.Usage
+	for i := range ss[0].Usage {
+		if ss[0].Usage[i].Model == "m3" {
+			m3 = &ss[0].Usage[i]
+		}
+	}
+	if len(ss[0].Usage) != 2 || m3 == nil || m3.Output != 4 || m3.Input != 0 || m3.Calls != 1 {
+		t.Fatalf("usage = %+v", ss[0].Usage)
 	}
 }
