@@ -3,6 +3,7 @@ package sweep
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -106,5 +107,67 @@ func TestRunWithoutJudgeCountsPending(t *testing.T) {
 	}
 	if rep.Pending != 1 || rep.Judged != 0 {
 		t.Fatalf("report = %+v", rep)
+	}
+}
+
+type errJudge struct{ calls int }
+
+func (f *errJudge) Same(ctx context.Context, a, b string) (link.Verdict, error) {
+	f.calls++
+	return link.Verdict{}, errors.New("boom")
+}
+
+func twoPairs(t *testing.T) (Config, *store.Store) {
+	t.Helper()
+	cfg, st := setup(t)
+	projects := cfg.ClaudeProjects
+	os.Remove(filepath.Join(projects, "p/s4.jsonl"))
+	for rel, body := range map[string]string{
+		"p/s6.jsonl": claudeLine("/nowhere/other", "", "2026-11-10T10:00:00Z", "r6", "Third thing"),
+		"p/s7.jsonl": claudeLine("/nowhere/other", "", "2026-11-20T10:00:00Z", "r7", "Fourth thing"),
+	} {
+		os.WriteFile(filepath.Join(projects, rel), []byte(body), 0o644)
+	}
+	return cfg, st
+}
+
+func TestJudgeBudget(t *testing.T) {
+	cfg, st := twoPairs(t)
+	j := &fakeJudge{}
+	cfg.Judge, cfg.MaxJudgments = j, 1
+	rep, err := Run(context.Background(), st, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if j.calls != 1 || rep.Judged != 1 || rep.Pending != 1 {
+		t.Fatalf("calls=%d report=%+v, want 1 call, Judged 1, Pending 1", j.calls, rep)
+	}
+}
+
+func TestJudgeErrorsCountAgainstBudget(t *testing.T) {
+	cfg, st := twoPairs(t)
+	j := &errJudge{}
+	cfg.Judge, cfg.MaxJudgments = j, 1
+	rep, err := Run(context.Background(), st, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if j.calls != 1 || rep.JudgeErrors != 1 || rep.Judged != 0 || rep.Pending != 1 {
+		t.Fatalf("calls=%d report=%+v, want 1 call, JudgeErrors 1, Pending 1", j.calls, rep)
+	}
+}
+
+func TestRunStopsOnCancel(t *testing.T) {
+	cfg, st := twoPairs(t)
+	j := &fakeJudge{}
+	cfg.Judge = j
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := Run(ctx, st, cfg)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+	if j.calls != 0 {
+		t.Fatalf("judge calls = %d, want 0", j.calls)
 	}
 }

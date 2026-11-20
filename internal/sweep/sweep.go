@@ -199,6 +199,9 @@ func judge(ctx context.Context, st *store.Store, cfg Config, sessions []model.Se
 		cards[d.SessionID] = d
 	}
 	for _, p := range pairs {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if groupOf[p[0]] == groupOf[p[1]] {
 			continue
 		}
@@ -211,7 +214,7 @@ func judge(ctx context.Context, st *store.Store, cfg Config, sessions []model.Se
 		if done {
 			continue
 		}
-		if cfg.Judge == nil || rep.Judged >= cfg.MaxJudgments {
+		if cfg.Judge == nil || rep.Judged+rep.JudgeErrors >= cfg.MaxJudgments {
 			rep.Pending++
 			continue
 		}
