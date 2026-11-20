@@ -39,13 +39,13 @@ func TestRepoResolution(t *testing.T) {
 		return ""
 	}
 	cases := map[string]string{
-		filepath.Join(repo, "sub"):                         "duro-labs/demo",
-		local:                                              "local:scratch",
-		home:                                               "",
-		filepath.Join(vault, "Agents"):                     "",
-		"/nowhere/gittrees/Widget-Site/721-render/":       "gittree:widget-site",
-		"/nowhere/at/all":                                  "",
-		"":                                                 "",
+		filepath.Join(repo, "sub"):     "duro-labs/demo",
+		local:                          "local:scratch",
+		home:                           "",
+		filepath.Join(vault, "Agents"): "",
+		"/nowhere/gittrees/Widget-Site/721-render/": "gittree:widget-site",
+		"/nowhere/at/all": "",
+		"":                "",
 	}
 	for cwd, want := range cases {
 		if got := r.Repo(cwd); got != want {
@@ -100,5 +100,53 @@ func TestEmptyVaultRootIsOff(t *testing.T) {
 	}
 	if got := r.Repo(filepath.Join(repo, "sub")); got != "duro-labs/demo" {
 		t.Fatalf("Repo with empty vault root = %q, want duro-labs/demo", got)
+	}
+}
+
+func TestHoardContractSubjects(t *testing.T) {
+	v := "/h/Vault"
+	cases := map[string]string{
+		"/h/Vault/Agents/personal/agent-setup/plan.md":              "Agents/personal/agent-setup",
+		"/h/Vault/Agents/personal/agent-setup/Drafts/x/post.md":     "Agents/personal/agent-setup",
+		"/h/Vault/Agents/personal/_Archive/agent-setup/old.md":      "Agents/personal/agent-setup",
+		"/h/Vault/Agents/personal/_Archive/agent-setup/a/b.html":    "Agents/personal/agent-setup",
+		"/h/Vault/Agents/personal/_Inbox/2026-11-20-notes.md":       "",
+		"/h/Vault/Agents/personal/_Inbox/scratch/2026-11-20-s/x.md": "",
+		"/h/Vault/Agents/personal/_Archive/stray.md":                "",
+		"/h/Vault/Personal/Work/career/a.md":                        "Personal/Work/career",
+	}
+	for f, want := range cases {
+		if got := VaultSubject(v, "", []string{f}); got != want {
+			t.Errorf("VaultSubject(%q) = %q, want %q", f, got, want)
+		}
+	}
+	if got := VaultSubject(v, "/h/Vault/Agents/personal/_Archive/agent-setup", nil); got != "Agents/personal/agent-setup" {
+		t.Errorf("archived cwd subject = %q", got)
+	}
+	if got := VaultSubject(v, "/h/Vault/Agents/personal/_Inbox", nil); got != "" {
+		t.Errorf("inbox cwd subject = %q", got)
+	}
+}
+
+func TestHoardRoot(t *testing.T) {
+	cfg := t.TempDir()
+	env := map[string]string{}
+	getenv := func(k string) string { return env[k] }
+	if got := HoardRoot(getenv, cfg); got != "" {
+		t.Fatalf("no env, no file: %q", got)
+	}
+	os.MkdirAll(filepath.Join(cfg, "hoard"), 0o755)
+	os.WriteFile(filepath.Join(cfg, "hoard", "config.env"), []byte("OTHER=1\nHOARD_VAULT_ROOT='/srv/vault'\n"), 0o600)
+	if got := HoardRoot(getenv, cfg); got != "/srv/vault" {
+		t.Fatalf("from file: %q", got)
+	}
+	home, _ := os.UserHomeDir()
+	os.WriteFile(filepath.Join(cfg, "hoard", "config.env"), []byte("HOARD_VAULT_ROOT=\"~/Notes\"\n"), 0o600)
+	if got := HoardRoot(getenv, cfg); got != filepath.Join(home, "Notes") {
+		t.Fatalf("tilde: %q", got)
+	}
+	env["HOARD_VAULT_ROOT"] = "/env/vault"
+	if got := HoardRoot(getenv, cfg); got != "/env/vault" {
+		t.Fatalf("env wins: %q", got)
 	}
 }

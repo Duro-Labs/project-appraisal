@@ -158,11 +158,50 @@ func subject(dirs []string) string {
 	if len(dirs) == 0 {
 		return ""
 	}
+	if dirs[0] == "Agents" && len(dirs) >= 3 {
+		switch dirs[2] {
+		case "_Inbox":
+			return ""
+		case "_Archive":
+			if len(dirs) < 4 {
+				return ""
+			}
+			return strings.Join([]string{dirs[0], dirs[1], dirs[3]}, "/")
+		}
+	}
 	n := 3
 	if len(dirs) < n {
 		n = len(dirs)
 	}
 	return strings.Join(dirs[:n], "/")
+}
+
+const hoardRootKey = "HOARD_VAULT_ROOT"
+
+func HoardRoot(getenv func(string) string, configDir string) string {
+	if v := strings.TrimSpace(getenv(hoardRootKey)); v != "" {
+		return expandHome(v)
+	}
+	data, err := os.ReadFile(filepath.Join(configDir, "hoard", "config.env"))
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		name, value, ok := strings.Cut(line, "=")
+		if ok && strings.TrimSpace(name) == hoardRootKey {
+			return expandHome(strings.Trim(strings.TrimSpace(value), `'"`))
+		}
+	}
+	return ""
+}
+
+func expandHome(p string) string {
+	if rest, ok := strings.CutPrefix(p, "~/"); ok {
+		if home, err := os.UserHomeDir(); err == nil {
+			return filepath.Join(home, rest)
+		}
+	}
+	return p
 }
 
 func Key(s model.Session, repo, vault string) string {
