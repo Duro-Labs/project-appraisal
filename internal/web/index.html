@@ -26,19 +26,44 @@ a{color:var(--accent)}
 button,select,input{font:inherit;color:inherit;background:var(--bg);border:1px solid var(--line);border-radius:4px;padding:3px 8px}
 button{cursor:pointer}
 .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:8px 0}
+header button.active{border-color:var(--accent);color:var(--accent)}
+#search{min-width:220px}
+textarea{width:100%;min-height:55vh;resize:vertical;font:13px/1.5 ui-monospace,monospace;color:inherit;background:var(--bg);border:1px solid var(--line);border-radius:4px;padding:10px}
+.artifact-row{display:block;width:100%;text-align:left;border:0;border-radius:0;padding:7px 16px;cursor:pointer}
+.artifact-row:hover,.artifact-row.on{background:var(--sel)}
+.artifact-row small{display:block;color:var(--muted);overflow-wrap:anywhere}
+.kind{padding:10px 16px 4px;color:var(--muted);font-weight:600;text-transform:capitalize}
+.path{overflow-wrap:anywhere}
 </style>
 </head>
 <body>
-<header><strong>Project appraisal</strong><span id="sum" class="n"></span></header>
+<header><strong>Project appraisal</strong><button id="tab-sessions" class="active">Sessions</button><button id="tab-artifacts">Memory, rules & hooks</button><input id="search" placeholder="Search names, paths and contents" hidden><span id="sum" class="n"></span></header>
 <main><nav id="tree"></nav><section id="detail"><p class="n">Pick a group.</p></section></main>
 <script>
 const fmt = n => n >= 1e9 ? (n/1e9).toFixed(2)+'B' : n >= 1e6 ? (n/1e6).toFixed(1)+'M' : n >= 1e3 ? (n/1e3).toFixed(1)+'k' : String(n);
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const label = g => g.Name || g.Suggested || g.ID;
 let groups = [], byId = {}, current = null;
+let tab = 'sessions', items = [], selectedArtifact = null, openedArtifact = null, searchTimer;
+
+document.getElementById('tab-sessions').onclick = () => switchTab('sessions');
+document.getElementById('tab-artifacts').onclick = () => switchTab('artifacts');
+document.getElementById('search').oninput = () => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(loadArtifacts, 180);
+};
+
+function switchTab(next) {
+  tab = next;
+  document.getElementById('tab-sessions').classList.toggle('active', tab === 'sessions');
+  document.getElementById('tab-artifacts').classList.toggle('active', tab === 'artifacts');
+  document.getElementById('search').hidden = tab !== 'artifacts';
+  if (tab === 'artifacts') loadArtifacts(); else load();
+}
 
 async function load(data) {
   data = data || await (await fetch('/api/groups')).json();
+  if (tab !== 'sessions') return;
   groups = data.groups; byId = Object.fromEntries(groups.map(g => [g.ID, g]));
   const total = groups.filter(g => !g.ParentID).reduce((a, g) => a + g.TreeTotal, 0);
   document.getElementById('sum').textContent = `${groups.length} groups · ${fmt(total)} tokens` + (data.stale ? ` · ${data.stale} stale decisions` : '');
@@ -111,6 +136,65 @@ function show(id) {
     const d = await r.json();
     $('card').innerHTML = `<h3>${esc(d.Title || d.ID)}</h3><pre>${esc(d.Card)}</pre>`;
   });
+}
+
+async function loadArtifacts() {
+  const query = document.getElementById('search').value.trim();
+  const r = await fetch('/api/artifacts?q=' + encodeURIComponent(query));
+  if (!r.ok) { document.getElementById('detail').textContent = await r.text(); return; }
+  const data = await r.json();
+  if (tab !== 'artifacts' || query !== document.getElementById('search').value.trim()) return;
+  items = data.items || [];
+  document.getElementById('sum').textContent = `${items.length} matching items`;
+  renderArtifacts();
+  if (selectedArtifact && items.some(item => item.ID === selectedArtifact)) showArtifact(selectedArtifact);
+  else { selectedArtifact = null; openedArtifact = null; document.getElementById('detail').innerHTML = '<p class="n">Pick a memory, rule or hook.</p>'; }
+}
+
+function renderArtifacts() {
+  const tree = document.getElementById('tree');
+  const out = [];
+  for (const kind of ['memory', 'rule', 'hook']) {
+    const matching = items.filter(item => item.Kind === kind);
+    if (!matching.length) continue;
+    out.push(`<div class="kind">${kind}s (${matching.length})</div>`);
+    out.push(...matching.map(item => `<button class="artifact-row${item.ID === selectedArtifact ? ' on' : ''}" data-id="${esc(item.ID)}"><strong>${esc(item.Name)}</strong><small>${esc(item.Provider)} · ${esc(item.Scope)}</small></button>`));
+  }
+  tree.innerHTML = out.join('') || '<p class="n" style="padding:0 16px">No matching items.</p>';
+  tree.querySelectorAll('.artifact-row').forEach(el => el.onclick = () => { selectedArtifact = el.dataset.id; renderArtifacts(); showArtifact(selectedArtifact); });
+}
+
+async function showArtifact(id) {
+  const r = await fetch('/api/artifact?id=' + encodeURIComponent(id));
+  if (!r.ok) { document.getElementById('detail').textContent = await r.text(); return; }
+  const data = await r.json();
+  if (tab !== 'artifacts' || selectedArtifact !== id) return;
+  openedArtifact = data.item;
+  const item = data.item;
+  document.getElementById('detail').innerHTML = `
+    <h2>${esc(item.Name)}</h2>
+    <p class="n">${esc(item.Provider)} · ${esc(item.Kind)} · ${esc(item.Scope)} · ${item.Size} bytes</p>
+    <p class="path"><code>${esc(item.Path)}</code></p>
+    ${item.Error ? `<p class="n">${esc(item.Error)}</p>` : ''}
+    <textarea id="artifact-content" ${item.Editable ? '' : 'readonly'}></textarea>
+    <div class="row">${item.Editable ? '<button id="save-artifact">Save changes</button>' : '<span class="n">Read-only</span>'}${item.Deletable ? '<button id="delete-artifact">Delete file…</button>' : ''}</div>`;
+  document.getElementById('artifact-content').value = data.content;
+  const save = document.getElementById('save-artifact');
+  if (save) save.onclick = async () => {
+    const response = await fetch('/api/artifact', {method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ID: item.ID, Hash: item.Hash, Content: document.getElementById('artifact-content').value})});
+    if (!response.ok) { alert(await response.text()); return; }
+    const updated = await response.json();
+    openedArtifact = updated.item;
+    await loadArtifacts();
+  };
+  const remove = document.getElementById('delete-artifact');
+  if (remove) remove.onclick = async () => {
+    if (!confirm(`Delete this file permanently?\n${item.Path}`)) return;
+    const response = await fetch('/api/artifact', {method: 'DELETE', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ID: item.ID, Hash: item.Hash})});
+    if (!response.ok) { alert(await response.text()); return; }
+    selectedArtifact = null;
+    await loadArtifacts();
+  };
 }
 
 load();

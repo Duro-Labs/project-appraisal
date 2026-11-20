@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"appraisal/internal/artifact"
 	"appraisal/internal/link"
 	"appraisal/internal/scope"
 	"appraisal/internal/store"
@@ -94,7 +95,12 @@ func main() {
 		if !loopback(*addr) {
 			fatal(fmt.Errorf("refusing non-loopback address %q", *addr))
 		}
-		srv := &web.Server{Store: st, Threshold: *threshold}
+		srv := &web.Server{Store: st, Threshold: *threshold, Artifacts: artifact.Config{
+			ClaudeHome: envOr("CLAUDE_CONFIG_DIR", filepath.Join(home, ".claude")),
+			CodexHome:  envOr("CODEX_HOME", filepath.Join(home, ".codex")),
+			HermesHome: envOr("HERMES_HOME", defaultHermesHome(home, dataHome)),
+			SharedHome: filepath.Join(home, ".agents"),
+		}}
 		fmt.Printf("http://%s\n", *addr)
 		if err := http.ListenAndServe(*addr, srv.Handler()); err != nil {
 			fatal(err)
