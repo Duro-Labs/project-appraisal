@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Project appraisal</title>
+<style>
+:root{--bg:#fbfaf7;--fg:#1d1d1b;--muted:#6b6a65;--line:#e4e1d8;--accent:#2f5d8a;--sel:#eef3f8}
+@media (prefers-color-scheme:dark){:root{--bg:#161615;--fg:#ecebe6;--muted:#9a988f;--line:#2c2b28;--accent:#8db4dc;--sel:#1f2a35}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 system-ui,sans-serif}
+header{padding:12px 16px;border-bottom:1px solid var(--line);display:flex;gap:16px;align-items:baseline;flex-wrap:wrap}
+main{display:grid;grid-template-columns:minmax(260px,38%) 1fr;height:calc(100vh - 49px)}
+@media (max-width:720px){main{grid-template-columns:1fr;height:auto}}
+#tree{border-right:1px solid var(--line);overflow:auto;padding:6px 0}
+.g{padding:6px 16px;cursor:pointer;display:flex;justify-content:space-between;gap:8px}
+.g:hover,.g.on{background:var(--sel)}
+.n{font-variant-numeric:tabular-nums;color:var(--muted)}
+#detail{padding:16px;overflow:auto}
+h2{margin:0 0 4px;font-size:18px}
+table{border-collapse:collapse;width:100%;margin:8px 0}
+td,th{padding:4px 6px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+td.r,th.r{text-align:right;font-variant-numeric:tabular-nums}
+pre{white-space:pre-wrap;background:var(--sel);padding:10px;border-radius:4px}
+a{color:var(--accent)}
+button,select,input{font:inherit;color:inherit;background:var(--bg);border:1px solid var(--line);border-radius:4px;padding:3px 8px}
+button{cursor:pointer}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:8px 0}
+</style>
+</head>
+<body>
+<header><strong>Project appraisal</strong><span id="sum" class="n"></span></header>
+<main><nav id="tree"></nav><section id="detail"><p class="n">Pick a group.</p></section></main>
+<script>
+const fmt = n => n >= 1e9 ? (n/1e9).toFixed(2)+'B' : n >= 1e6 ? (n/1e6).toFixed(1)+'M' : n >= 1e3 ? (n/1e3).toFixed(1)+'k' : String(n);
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const label = g => g.Name || g.Suggested || g.ID;
+let groups = [], byId = {}, current = null;
+
+async function load(data) {
+  data = data || await (await fetch('/api/groups')).json();
+  groups = data.groups; byId = Object.fromEntries(groups.map(g => [g.ID, g]));
+  const total = groups.filter(g => !g.ParentID).reduce((a, g) => a + g.TreeTotal, 0);
+  document.getElementById('sum').textContent = `${groups.length} groups · ${fmt(total)} tokens` + (data.stale ? ` · ${data.stale} stale decisions` : '');
+  renderTree();
+  if (current && byId[current]) show(current);
+  else document.getElementById('detail').innerHTML = '<p class="n">Pick a group.</p>';
+}
+
+function renderTree() {
+  const out = [];
+  const walk = (g, depth) => {
+    const roots = g.Sessions.filter(s => !s.Child).length;
+    out.push(`<div class="g${g.ID === current ? ' on' : ''}" data-id="${esc(g.ID)}" style="padding-left:${16 + depth * 16}px"><span>${esc(label(g))} <span class="n">(${roots})</span></span><span class="n">${fmt(g.TreeTotal)}</span></div>`);
+    (g.Children || []).map(id => byId[id]).filter(Boolean).sort((a, b) => b.TreeTotal - a.TreeTotal).forEach(c => walk(c, depth + 1));
+  };
+  groups.filter(g => !g.ParentID).forEach(g => walk(g, 0));
+  const tree = document.getElementById('tree');
+  tree.innerHTML = out.join('');
+  tree.querySelectorAll('.g').forEach(el => el.onclick = () => { current = el.dataset.id; renderTree(); show(current); });
+}
+
+async function decide(list) {
+  let data;
+  for (const d of list) {
+    const r = await fetch('/api/decisions', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(d)});
+    if (!r.ok) { alert(await r.text()); return; }
+    data = await r.json();
+  }
+  if (data) await load(data);
+}
+
+function show(id) {
+  const g = byId[id], anchor = g.Roots[0], t = g.Totals;
+  const others = groups.filter(o => o.ID !== id).sort((a, b) => label(a).localeCompare(label(b)))
+    .map(o => `<option value="${esc(o.Roots[0])}">${esc(label(o))}</option>`).join('');
+  const models = Object.entries(t.ByModel || {}).sort((a, b) => b[1] - a[1])
+    .map(([m, n]) => `<tr><td>${esc(m)}</td><td class="r">${fmt(n)}</td></tr>`).join('');
+  const rows = g.Sessions.map(s => `<tr><td>${s.Child ? '' : `<input type="checkbox" value="${esc(s.ID)}">`}</td><td>${s.Child ? '↳ ' : ''}<a href="#" data-s="${esc(s.ID)}">${esc(s.Title || s.ID)}</a></td><td>${esc(s.Provider)}</td><td>${esc((s.Start || '').slice(0, 10))}</td><td class="r">${fmt(s.Tokens)}</td></tr>`).join('');
+  document.getElementById('detail').innerHTML = `
+    <h2>${esc(label(g))}</h2>
+    <p class="n">${esc(g.Scope)} · ${fmt(t.Total)} tokens here, ${fmt(g.TreeTotal)} with nested groups · input ${fmt(t.Input)} · output ${fmt(t.Output)} · cache read ${fmt(t.CacheRead)} · cache write ${fmt(t.CacheWrite)}</p>
+    <div class="row"><input id="nm" value="${esc(g.Name)}" placeholder="${esc(g.Suggested)}"><button id="rn">Rename</button></div>
+    <div class="row"><select id="tg">${others}</select><button id="mg">Merge into</button><button id="ns">Nest under</button>${g.ParentID ? '<button id="un">Unnest</button>' : ''}</div>
+    <table><thead><tr><th></th><th>Session</th><th>Tool</th><th>Started</th><th class="r">Tokens</th></tr></thead><tbody>${rows}</tbody></table>
+    <div class="row"><button id="dt">Detach selected</button><button id="ng">Selected → new group</button></div>
+    <h3>By model</h3><table>${models}</table>
+    <div id="card"></div>`;
+  const $ = s => document.getElementById(s);
+  const sel = () => [...document.querySelectorAll('#detail input[type=checkbox]:checked')].map(i => i.value);
+  $('rn').onclick = () => decide([{Kind: 'name', A: anchor, Name: $('nm').value}]);
+  $('mg').onclick = () => $('tg').value && decide([{Kind: 'merge', A: anchor, B: $('tg').value}]);
+  $('ns').onclick = () => $('tg').value && decide([{Kind: 'nest', A: anchor, B: $('tg').value}]);
+  if ($('un')) $('un').onclick = () => decide([{Kind: 'unnest', A: anchor}]);
+  $('dt').onclick = () => decide(sel().map(a => ({Kind: 'detach', A: a})));
+  $('ng').onclick = () => {
+    const s = sel();
+    if (!s.length) return;
+    decide([...s.map(a => ({Kind: 'detach', A: a})), ...s.slice(1).map(a => ({Kind: 'merge', A: s[0], B: a}))]);
+  };
+  document.querySelectorAll('#detail a[data-s]').forEach(a => a.onclick = async e => {
+    e.preventDefault();
+    const d = await (await fetch('/api/session?id=' + encodeURIComponent(a.dataset.s))).json();
+    $('card').innerHTML = `<h3>${esc(d.Title || d.ID)}</h3><pre>${esc(d.Card)}</pre>`;
+  });
+}
+
+load();
+</script>
+</body>
+</html>
