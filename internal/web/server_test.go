@@ -1,11 +1,16 @@
 package web
 
 import (
+	"context"
+	"database/sql"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -178,5 +183,150 @@ func TestSplitRecipeKeepsRemainderTogether(t *testing.T) {
 	}
 	if !sets["claude:c,claude:d"] || !sets["claude:x,claude:y"] {
 		t.Fatalf("groups = %+v", g.Groups)
+	}
+}
+
+func postDelete(id string, transcript bool) *http.Request {
+	return post(`{"ID":"`+id+`","DeleteTranscript":`+strconv.FormatBool(transcript)+`}`, "http://127.0.0.1:7790", "application/json")
+}
+
+func TestRemoveSessionFromAppraisal(t *testing.T) {
+	h := server(t)
+	r := postDelete("claude:a", false)
+	r.URL.Path = "/api/sessions/delete"
+	w := do(t, h, r)
+	var g groupsResp
+	if err := json.Unmarshal(w.Body.Bytes(), &g); err != nil || w.Code != 200 || len(g.Groups) != 1 || g.Groups[0].TreeTotal != 7 {
+		t.Fatalf("remove: %d %+v, %v", w.Code, g, err)
+	}
+	second := postDelete("claude:a", false)
+	second.URL.Path = "/api/sessions/delete"
+	if w := do(t, h, second); w.Code != 404 {
+		t.Fatalf("second remove: %d", w.Code)
+	}
+	foreign := postDelete("claude:b", false)
+	foreign.URL.Path = "/api/sessions/delete"
+	foreign.Header.Set("Origin", "https://evil.example")
+	if w := do(t, h, foreign); w.Code != 403 {
+		t.Fatalf("foreign origin: %d", w.Code)
+	}
+}
+
+func TestDeleteTranscriptFile(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "session.jsonl")
+	if err := os.WriteFile(path, []byte("transcript"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	st, err := store.Open(filepath.Join(t.TempDir(), "a.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	row := model.Session{ID: "claude:a", Provider: "claude", SourcePath: path, Usage: []model.Usage{{Input: 5}}}
+	if err := st.ReplaceFile(store.FileRow{Path: path, Provider: "claude"}, []model.Session{row}); err != nil {
+		t.Fatal(err)
+	}
+	h := (&Server{Store: st, ClaudeRoot: root}).Handler()
+	r := postDelete(row.ID, true)
+	r.URL.Path = "/api/sessions/delete"
+	if w := do(t, h, r); w.Code != 200 {
+		t.Fatalf("delete: %d %s", w.Code, w.Body.String())
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("source file still exists: %v", err)
+	}
+	if err := st.ReplaceFile(store.FileRow{Path: path, Provider: "claude"}, []model.Session{row}); err != nil {
+		t.Fatal(err)
+	}
+	if rows, err := st.Sessions(); err != nil || len(rows) != 0 {
+		t.Fatalf("reimport: %+v, %v", rows, err)
+	}
+}
+
+func TestDeleteTranscriptFileRefusesSharedSource(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "shared.jsonl")
+	if err := os.WriteFile(path, []byte("transcript"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	st, err := store.Open(filepath.Join(t.TempDir(), "a.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	rows := []model.Session{{ID: "claude:a", Provider: "claude", SourcePath: path}, {ID: "claude:b", Provider: "claude", SourcePath: path}}
+	if err := st.ReplaceFile(store.FileRow{Path: path, Provider: "claude"}, rows); err != nil {
+		t.Fatal(err)
+	}
+	h := (&Server{Store: st, ClaudeRoot: root}).Handler()
+	r := postDelete(rows[0].ID, true)
+	r.URL.Path = "/api/sessions/delete"
+	if w := do(t, h, r); w.Code != 409 {
+		t.Fatalf("shared source: %d %s", w.Code, w.Body.String())
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("shared source changed: %v", err)
+	}
+	if got, err := st.Sessions(); err != nil || len(got) != 2 {
+		t.Fatalf("sessions changed: %+v, %v", got, err)
+	}
+}
+
+func TestDeleteHermesTranscriptReconcilesDeletedRows(t *testing.T) {
+	home := t.TempDir()
+	path := filepath.Join(home, "profiles", "work", "state.db")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	for _, q := range []string{
+		`CREATE TABLE sessions (id TEXT PRIMARY KEY, title TEXT, started_at REAL)`,
+		`CREATE TABLE messages (id INTEGER PRIMARY KEY, session_id TEXT, role TEXT, content TEXT, tool_name TEXT)`,
+		`INSERT INTO sessions(id,title,started_at) VALUES ('a','A',10),('b','B',20),('c','C',30)`,
+		`INSERT INTO messages(session_id,role,content) VALUES ('a','user','one'),('b','user','two'),('c','user','three')`,
+	} {
+		if _, err := db.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	st, err := store.Open(filepath.Join(t.TempDir(), "a.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	rows := []model.Session{
+		{ID: "hermes:work:a", Provider: "hermes", Profile: "work", SourcePath: path, Usage: []model.Usage{{Input: 5}}},
+		{ID: "hermes:work:b", Provider: "hermes", Profile: "work", SourcePath: path, Usage: []model.Usage{{Input: 7}}},
+		{ID: "hermes:work:c", Provider: "hermes", Profile: "work", SourcePath: path, Usage: []model.Usage{{Input: 11}}},
+	}
+	if err := st.ReplaceFile(store.FileRow{Path: path, Provider: "hermes"}, rows); err != nil {
+		t.Fatal(err)
+	}
+	called := false
+	h := (&Server{Store: st, HermesHome: home, DeleteHermes: func(_ context.Context, profile, id string) error {
+		if profile != "work" || id != "a" {
+			t.Fatalf("delete target = %s %s", profile, id)
+		}
+		called = true
+		_, err := db.Exec(`DELETE FROM messages WHERE session_id IN ('a','b')`)
+		if err == nil {
+			_, err = db.Exec(`DELETE FROM sessions WHERE id IN ('a','b')`)
+		}
+		if err != nil {
+			return err
+		}
+		return fmt.Errorf("Hermes reported an error after deletion")
+	}}).Handler()
+	r := postDelete(rows[0].ID, true)
+	r.URL.Path = "/api/sessions/delete"
+	w := do(t, h, r)
+	var g groupsResp
+	if err := json.Unmarshal(w.Body.Bytes(), &g); err != nil || w.Code != 200 || !called || len(g.Groups) != 1 || g.Groups[0].TreeTotal != 11 {
+		t.Fatalf("Hermes delete: %d %+v, called=%v, err=%v, body=%s", w.Code, g, called, err, w.Body.String())
 	}
 }

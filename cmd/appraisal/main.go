@@ -54,13 +54,15 @@ func main() {
 		fatal(err)
 	}
 	defer st.Close()
+	claudeRoot := filepath.Join(envOr("CLAUDE_CONFIG_DIR", filepath.Join(home, ".claude")), "projects")
+	codexHome := envOr("CODEX_HOME", filepath.Join(home, ".codex"))
+	hermesHome := envOr("HERMES_HOME", defaultHermesHome(home, dataHome))
 
 	switch cmd {
 	case "sweep":
-		hermesHome := envOr("HERMES_HOME", defaultHermesHome(home, dataHome))
 		cfg := sweep.Config{
-			ClaudeProjects: filepath.Join(envOr("CLAUDE_CONFIG_DIR", filepath.Join(home, ".claude")), "projects"),
-			CodexHome:      envOr("CODEX_HOME", filepath.Join(home, ".codex")),
+			ClaudeProjects: claudeRoot,
+			CodexHome:      codexHome,
 			HermesHome:     hermesHome,
 			VaultRoot:      *vault,
 			Home:           home,
@@ -94,7 +96,7 @@ func main() {
 		if !loopback(*addr) {
 			fatal(fmt.Errorf("refusing non-loopback address %q", *addr))
 		}
-		srv := &web.Server{Store: st, Threshold: *threshold}
+		srv := &web.Server{Store: st, Threshold: *threshold, ClaudeRoot: claudeRoot, CodexRoot: codexHome, HermesHome: hermesHome}
 		fmt.Printf("http://%s\n", *addr)
 		if err := http.ListenAndServe(*addr, srv.Handler()); err != nil {
 			fatal(err)

@@ -119,3 +119,25 @@ func TestSaveDerivedRejectsUnknownSessionAndRollsBack(t *testing.T) {
 		t.Fatalf("partial write survived rollback: %v", d["y"])
 	}
 }
+
+func TestRemoveSessionStaysGoneAfterSourceIsReparsed(t *testing.T) {
+	st := open(t)
+	f := FileRow{Path: "/shared", Provider: "hermes", Size: 10, ParserVersion: 1}
+	rows := []model.Session{sess("hermes:default:a", f.Path, 5), sess("hermes:default:b", f.Path, 7)}
+	if err := st.ReplaceFile(f, rows); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.RemoveSessions([]string{rows[0].ID}, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.ReplaceFile(f, rows); err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.Sessions()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].ID != rows[1].ID || got[0].TotalTokens() != 7 {
+		t.Fatalf("sessions after reparse = %+v", got)
+	}
+}

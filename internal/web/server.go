@@ -1,8 +1,10 @@
 package web
 
 import (
+	"context"
 	_ "embed"
 	"encoding/json"
+	"errors"
 	"mime"
 	"net"
 	"net/http"
@@ -22,15 +24,20 @@ var page []byte
 const maxBody = 64 << 10
 
 type Server struct {
-	Store     *store.Store
-	Threshold float64
+	Store        *store.Store
+	Threshold    float64
+	ClaudeRoot   string
+	CodexRoot    string
+	HermesHome   string
+	DeleteHermes func(context.Context, string, string) error
 }
 
 type sessionView struct {
-	ID, Provider, Title, Scope string
-	Start                      time.Time
-	Tokens                     int64
-	Child                      bool
+	ID, Provider, Title, Scope, SourcePath string
+	Start                                  time.Time
+	Tokens                                 int64
+	Child                                  bool
+	CanDeleteTranscript                    bool
 }
 
 type groupView struct {
@@ -52,6 +59,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/groups", s.groups)
 	mux.HandleFunc("GET /api/session", s.session)
 	mux.HandleFunc("POST /api/decisions", s.decide)
+	mux.HandleFunc("POST /api/sessions/delete", s.delete)
 	return loopbackOnly(mux)
 }
 
@@ -96,7 +104,8 @@ func (s *Server) groups(w http.ResponseWriter, r *http.Request) {
 		for _, id := range g.Sessions {
 			ss := byID[id]
 			v.Sessions = append(v.Sessions, sessionView{ID: id, Provider: ss.Provider, Title: ss.Title, Scope: derived[id].Scope,
-				Start: ss.StartedAt, Tokens: ss.TotalTokens(), Child: ss.ParentID != ""})
+				SourcePath: ss.SourcePath, Start: ss.StartedAt, Tokens: ss.TotalTokens(), Child: ss.ParentID != "",
+				CanDeleteTranscript: s.canDeleteTranscript(ss)})
 		}
 		views = append(views, v)
 	}
@@ -121,15 +130,7 @@ func (s *Server) session(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) decide(w http.ResponseWriter, r *http.Request) {
-	if origin := r.Header.Get("Origin"); origin != "" {
-		u, err := url.Parse(origin)
-		if err != nil || u.Host != r.Host {
-			http.Error(w, "cross-origin request refused", http.StatusForbidden)
-			return
-		}
-	}
-	if ct, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type")); ct != "application/json" {
-		http.Error(w, "send application/json", http.StatusUnsupportedMediaType)
+	if !mutationAllowed(w, r) {
 		return
 	}
 	var d model.Decision
@@ -145,6 +146,50 @@ func (s *Server) decide(w http.ResponseWriter, r *http.Request) {
 	d.CreatedAt = time.Now()
 	if _, err := s.Store.AddDecision(d); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.groups(w, r)
+}
+
+func mutationAllowed(w http.ResponseWriter, r *http.Request) bool {
+	if origin := r.Header.Get("Origin"); origin != "" {
+		u, err := url.Parse(origin)
+		if err != nil || u.Host != r.Host {
+			http.Error(w, "cross-origin request refused", http.StatusForbidden)
+			return false
+		}
+	}
+	if ct, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type")); ct != "application/json" {
+		http.Error(w, "send application/json", http.StatusUnsupportedMediaType)
+		return false
+	}
+	return true
+}
+
+func (s *Server) delete(w http.ResponseWriter, r *http.Request) {
+	if !mutationAllowed(w, r) {
+		return
+	}
+	var req struct {
+		ID               string
+		DeleteTranscript bool
+	}
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBody))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&req); err != nil || req.ID == "" {
+		http.Error(w, "bad JSON", http.StatusBadRequest)
+		return
+	}
+	if err := s.deleteSession(r.Context(), req.ID, req.DeleteTranscript); err != nil {
+		if isMissingSession(err) {
+			http.NotFound(w, r)
+		} else if errors.Is(err, errSharedSource) {
+			http.Error(w, err.Error(), http.StatusConflict)
+		} else if errors.Is(err, errTranscriptUnavailable) {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+		} else {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
 		return
 	}
 	s.groups(w, r)

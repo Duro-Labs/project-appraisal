@@ -26,6 +26,9 @@ a{color:var(--accent)}
 button,select,input{font:inherit;color:inherit;background:var(--bg);border:1px solid var(--line);border-radius:4px;padding:3px 8px}
 button{cursor:pointer}
 .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:8px 0}
+dialog{background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:6px;max-width:min(550px,90vw)}
+dialog::backdrop{background:#0008}
+dialog code{overflow-wrap:anywhere}
 </style>
 </head>
 <body>
@@ -76,16 +79,17 @@ function show(id) {
     .map(o => `<option value="${esc(o.Roots[0])}">${esc(label(o))}</option>`).join('');
   const models = Object.entries(t.ByModel || {}).sort((a, b) => b[1] - a[1])
     .map(([m, n]) => `<tr><td>${esc(m)}</td><td class="r">${fmt(n)}</td></tr>`).join('');
-  const rows = g.Sessions.map(s => `<tr><td>${s.Child ? '' : `<input type="checkbox" value="${esc(s.ID)}">`}</td><td>${s.Child ? '↳ ' : ''}<a href="#" data-s="${esc(s.ID)}">${esc(s.Title || s.ID)}</a></td><td>${esc(s.Provider)}</td><td>${esc((s.Start || '').slice(0, 10))}</td><td class="r">${fmt(s.Tokens)}</td></tr>`).join('');
+  const rows = g.Sessions.map(s => `<tr><td>${s.Child ? '' : `<input type="checkbox" value="${esc(s.ID)}">`}</td><td>${s.Child ? '↳ ' : ''}<a href="#" data-s="${esc(s.ID)}">${esc(s.Title || s.ID)}</a></td><td>${esc(s.Provider)}</td><td>${esc((s.Start || '').slice(0, 10))}</td><td class="r">${fmt(s.Tokens)}</td><td><button type="button" data-delete="${esc(s.ID)}">Delete…</button></td></tr>`).join('');
   document.getElementById('detail').innerHTML = `
     <h2>${esc(label(g))}</h2>
     <p class="n">${esc(g.Scope)} · ${fmt(t.Total)} tokens here, ${fmt(g.TreeTotal)} with nested groups · input ${fmt(t.Input)} · output ${fmt(t.Output)} · cache read ${fmt(t.CacheRead)} · cache write ${fmt(t.CacheWrite)}</p>
     <div class="row"><input id="nm" value="${esc(g.Name)}" placeholder="${esc(g.Suggested)}"><button id="rn">Rename</button></div>
     <div class="row"><select id="tg">${others}</select><button id="mg">Merge into</button><button id="ns">Nest under</button>${g.ParentID ? '<button id="un">Unnest</button>' : ''}</div>
-    <table><thead><tr><th></th><th>Session</th><th>Tool</th><th>Started</th><th class="r">Tokens</th></tr></thead><tbody>${rows}</tbody></table>
+    <table><thead><tr><th></th><th>Session</th><th>Tool</th><th>Started</th><th class="r">Tokens</th><th></th></tr></thead><tbody>${rows}</tbody></table>
     <div class="row"><button id="dt">Detach selected</button><button id="ng">Selected → new group</button></div>
     <h3>By model</h3><table>${models}</table>
-    <div id="card"></div>`;
+    <div id="card"></div>
+    <dialog id="delete-dialog"><h3>Delete session</h3><p id="delete-title"></p><p id="delete-source"></p><p id="delete-note" class="n"></p><div class="row"><button id="remove-only">Remove from Appraisal</button><button id="remove-source">Delete transcript permanently</button><button id="cancel-delete">Cancel</button></div></dialog>`;
   const $ = s => document.getElementById(s);
   const sel = () => [...document.querySelectorAll('#detail input[type=checkbox]:checked')].map(i => i.value);
   $('rn').onclick = () => decide([{Kind: 'name', A: anchor, Name: $('nm').value}]);
@@ -104,6 +108,24 @@ function show(id) {
   };
   $('dt').onclick = () => split(false);
   $('ng').onclick = () => split(true);
+  document.querySelectorAll('#detail button[data-delete]').forEach(button => button.onclick = () => {
+    const s = g.Sessions.find(row => row.ID === button.dataset.delete);
+    const dialog = $('delete-dialog');
+    $('delete-title').textContent = s.Title || s.ID;
+    $('delete-source').innerHTML = `Source: <code>${esc(s.SourcePath)}</code>`;
+    $('delete-note').textContent = s.Provider === 'hermes' ? 'Hermes may also delete delegated child sessions.' : 'Removing from Appraisal keeps the source transcript.';
+    $('remove-source').hidden = !s.CanDeleteTranscript;
+    const remove = async deleteTranscript => {
+      const r = await fetch('/api/sessions/delete', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ID: s.ID, DeleteTranscript: deleteTranscript})});
+      if (!r.ok) { alert(await r.text()); return; }
+      dialog.close();
+      await load(await r.json());
+    };
+    $('remove-only').onclick = () => remove(false);
+    $('remove-source').onclick = () => remove(true);
+    $('cancel-delete').onclick = () => dialog.close();
+    dialog.showModal();
+  });
   document.querySelectorAll('#detail a[data-s]').forEach(a => a.onclick = async e => {
     e.preventDefault();
     const r = await fetch('/api/session?id=' + encodeURIComponent(a.dataset.s));

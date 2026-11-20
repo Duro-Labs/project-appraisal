@@ -35,6 +35,7 @@ CREATE TABLE IF NOT EXISTS judgments (
 CREATE TABLE IF NOT EXISTS decisions (
   id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL, a TEXT NOT NULL, b TEXT NOT NULL,
   name TEXT NOT NULL, created_at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS excluded_sessions (id TEXT PRIMARY KEY);
 `
 
 type Store struct{ db *sql.DB }
@@ -86,6 +87,13 @@ func (s *Store) ReplaceFile(f FileRow, sessions []model.Session) error {
 		return err
 	}
 	for _, ss := range sessions {
+		var excluded int
+		if err := tx.QueryRow(`SELECT COUNT(*) FROM excluded_sessions WHERE id=?`, ss.ID).Scan(&excluded); err != nil {
+			return err
+		}
+		if excluded != 0 {
+			continue
+		}
 		data, err := json.Marshal(ss)
 		if err != nil {
 			return err
@@ -107,6 +115,52 @@ func (s *Store) ReplaceFile(f FileRow, sessions []model.Session) error {
 	if _, err := tx.Exec(`INSERT OR REPLACE INTO files VALUES (?,?,?,?,?,?)`,
 		f.Path, f.Provider, f.Size, f.Mtime, f.ParserVersion, f.Skipped); err != nil {
 		return err
+	}
+	return tx.Commit()
+}
+
+func (s *Store) Session(id string) (model.Session, error) {
+	var data string
+	if err := s.db.QueryRow(`SELECT data FROM sessions WHERE id=?`, id).Scan(&data); err != nil {
+		return model.Session{}, err
+	}
+	var session model.Session
+	err := json.Unmarshal([]byte(data), &session)
+	return session, err
+}
+
+func (s *Store) RemoveSessions(ids []string, removedSource string) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, id := range ids {
+		var n int
+		if err := tx.QueryRow(`SELECT COUNT(*) FROM sessions WHERE id=?`, id).Scan(&n); err != nil {
+			return err
+		}
+		if n == 0 {
+			return fmt.Errorf("store: unknown session %q", id)
+		}
+		if _, err := tx.Exec(`INSERT OR IGNORE INTO excluded_sessions(id) VALUES (?)`, id); err != nil {
+			return err
+		}
+		for _, q := range []string{`DELETE FROM usage WHERE session_id=?`, `DELETE FROM sessions WHERE id=?`} {
+			if _, err := tx.Exec(q, id); err != nil {
+				return err
+			}
+		}
+		for _, q := range []string{`DELETE FROM links WHERE a=? OR b=?`, `DELETE FROM judgments WHERE a=? OR b=?`, `DELETE FROM decisions WHERE a=? OR b=?`} {
+			if _, err := tx.Exec(q, id, id); err != nil {
+				return err
+			}
+		}
+	}
+	if removedSource != "" {
+		if _, err := tx.Exec(`DELETE FROM files WHERE path=?`, removedSource); err != nil {
+			return err
+		}
 	}
 	return tx.Commit()
 }
