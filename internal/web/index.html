@@ -64,7 +64,7 @@ async function decide(list) {
   let data;
   for (const d of list) {
     const r = await fetch('/api/decisions', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(d)});
-    if (!r.ok) { alert(await r.text()); return; }
+    if (!r.ok) { alert(await r.text()); await load(); return; }
     data = await r.json();
   }
   if (data) await load(data);
@@ -106,7 +106,9 @@ function show(id) {
   $('ng').onclick = () => split(true);
   document.querySelectorAll('#detail a[data-s]').forEach(a => a.onclick = async e => {
     e.preventDefault();
-    const d = await (await fetch('/api/session?id=' + encodeURIComponent(a.dataset.s))).json();
+    const r = await fetch('/api/session?id=' + encodeURIComponent(a.dataset.s));
+    if (!r.ok) { $('card').innerHTML = `<p class="n">${esc(r.status === 404 ? 'Session not found' : 'Could not load session')}</p>`; return; }
+    const d = await r.json();
     $('card').innerHTML = `<h3>${esc(d.Title || d.ID)}</h3><pre>${esc(d.Card)}</pre>`;
   });
 }

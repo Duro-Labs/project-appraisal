@@ -126,6 +126,10 @@ func (s *Store) Sessions() ([]model.Session, error) {
 		}
 		usage[id] = append(usage[id], u)
 	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
 	rows.Close()
 	rows, err = s.db.Query(`SELECT data FROM sessions ORDER BY started_at, id`)
 	if err != nil {
