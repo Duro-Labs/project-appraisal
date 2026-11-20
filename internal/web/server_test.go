@@ -40,6 +40,9 @@ type groupsResp struct {
 
 func do(t *testing.T, h http.Handler, req *http.Request) *httptest.ResponseRecorder {
 	t.Helper()
+	if req.Host == "example.com" {
+		req.Host = "127.0.0.1:7790"
+	}
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, req)
 	return w
@@ -98,5 +101,27 @@ func TestDecisions(t *testing.T) {
 	}
 	if w := do(t, h, post(`{"Kind":"explode","A":"claude:a"}`, "", "application/json")); w.Code != 400 {
 		t.Fatalf("invalid decision: %d", w.Code)
+	}
+}
+
+func TestHostAllowlist(t *testing.T) {
+	h := server(t)
+	get := func(host string) int {
+		r := httptest.NewRequest("GET", "/api/groups", nil)
+		r.Host = host
+		return do(t, h, r).Code
+	}
+	if c := get("evil.example:7790"); c != 403 {
+		t.Fatalf("foreign host: %d", c)
+	}
+	for _, host := range []string{"localhost:7790", "127.0.0.1:7790", "[::1]:7790", "localhost", "127.0.0.2:1"} {
+		if c := get(host); c != 200 {
+			t.Fatalf("%s: %d", host, c)
+		}
+	}
+	r := post(`{"Kind":"merge","A":"claude:a","B":"claude:b"}`, "http://evil.example:7790", "application/json")
+	r.Host = "evil.example:7790"
+	if w := do(t, h, r); w.Code != 403 {
+		t.Fatalf("rebinding POST: %d", w.Code)
 	}
 }

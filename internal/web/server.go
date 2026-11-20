@@ -4,8 +4,10 @@ import (
 	_ "embed"
 	"encoding/json"
 	"mime"
+	"net"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"appraisal/internal/group"
@@ -50,7 +52,30 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/groups", s.groups)
 	mux.HandleFunc("GET /api/session", s.session)
 	mux.HandleFunc("POST /api/decisions", s.decide)
-	return mux
+	return loopbackOnly(mux)
+}
+
+func loopbackOnly(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !loopbackHost(r.Host) {
+			http.Error(w, "host not allowed", http.StatusForbidden)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func loopbackHost(hostport string) bool {
+	host := hostport
+	if h, _, err := net.SplitHostPort(hostport); err == nil {
+		host = h
+	}
+	host = strings.Trim(host, "[]")
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 func (s *Server) groups(w http.ResponseWriter, r *http.Request) {
