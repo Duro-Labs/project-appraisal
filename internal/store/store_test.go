@@ -2,6 +2,7 @@ package store
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -98,5 +99,23 @@ func TestDerivedLinksJudgmentsDecisions(t *testing.T) {
 	ds, _ := st.Decisions()
 	if len(ds) != 2 || ds[0].Kind != model.DecisionMerge || ds[1].Name != "N" || ds[1].ID <= ds[0].ID {
 		t.Fatalf("decisions = %+v", ds)
+	}
+}
+
+func TestSaveDerivedRejectsUnknownSessionAndRollsBack(t *testing.T) {
+	st := open(t)
+	if err := st.ReplaceFile(FileRow{Path: "/f3", Provider: "claude"}, []model.Session{sess("y", "/f3", 1)}); err != nil {
+		t.Fatal(err)
+	}
+	err := st.SaveDerived([]Derived{
+		{SessionID: "y", Repo: "o/r", CardHash: "h"},
+		{SessionID: "ghost", Repo: "o/r", CardHash: "g"},
+	})
+	if err == nil || !strings.Contains(err.Error(), `"ghost"`) {
+		t.Fatalf("SaveDerived err = %v, want error naming session ghost", err)
+	}
+	d, _ := st.Derived()
+	if d["y"].CardHash != "" {
+		t.Fatalf("partial write survived rollback: %v", d["y"])
 	}
 }

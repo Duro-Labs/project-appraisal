@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"time"
@@ -154,9 +155,15 @@ func (s *Store) SaveDerived(rows []Derived) error {
 	}
 	defer tx.Rollback()
 	for _, d := range rows {
-		if _, err := tx.Exec(`UPDATE sessions SET repo=?, scope=?, card=?, card_hash=? WHERE id=?`,
-			d.Repo, d.Scope, d.Card, d.CardHash, d.SessionID); err != nil {
+		res, err := tx.Exec(`UPDATE sessions SET repo=?, scope=?, card=?, card_hash=? WHERE id=?`,
+			d.Repo, d.Scope, d.Card, d.CardHash, d.SessionID)
+		if err != nil {
 			return err
+		}
+		if n, err := res.RowsAffected(); err != nil {
+			return err
+		} else if n == 0 {
+			return fmt.Errorf("store: unknown session %q", d.SessionID)
 		}
 	}
 	return tx.Commit()
