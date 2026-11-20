@@ -220,6 +220,9 @@ func judge(ctx context.Context, st *store.Store, cfg Config, sessions []model.Se
 		}
 		v, err := cfg.Judge.Same(ctx, a.Card, b.Card)
 		if err != nil {
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				return err
+			}
 			rep.JudgeErrors++
 			fmt.Fprintf(cfg.Log, "judge %s %s: %v\n", p[0], p[1], err)
 			continue

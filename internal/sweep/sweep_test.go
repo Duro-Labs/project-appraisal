@@ -171,3 +171,28 @@ func TestRunStopsOnCancel(t *testing.T) {
 		t.Fatalf("judge calls = %d, want 0", j.calls)
 	}
 }
+
+type cancelJudge struct {
+	cancel context.CancelFunc
+	calls  int
+}
+
+func (f *cancelJudge) Same(ctx context.Context, a, b string) (link.Verdict, error) {
+	f.calls++
+	f.cancel()
+	return link.Verdict{}, ctx.Err()
+}
+
+func TestRunStopsOnInFlightCancel(t *testing.T) {
+	cfg, st := twoPairs(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	j := &cancelJudge{cancel: cancel}
+	cfg.Judge, cfg.MaxJudgments = j, 10
+	rep, err := Run(ctx, st, cfg)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+	if j.calls != 1 || rep.JudgeErrors != 0 {
+		t.Fatalf("calls=%d report=%+v, want 1 call and JudgeErrors 0", j.calls, rep)
+	}
+}
