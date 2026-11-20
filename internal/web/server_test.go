@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -123,5 +124,59 @@ func TestHostAllowlist(t *testing.T) {
 	r.Host = "evil.example:7790"
 	if w := do(t, h, r); w.Code != 403 {
 		t.Fatalf("rebinding POST: %d", w.Code)
+	}
+}
+
+func TestSplitRecipeKeepsRemainderTogether(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "a.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	var ss []model.Session
+	for i, id := range []string{"claude:c", "claude:x", "claude:y", "claude:d"} {
+		ss = append(ss, model.Session{ID: id, Provider: "claude", SourcePath: "/f", StartedAt: time.Unix(int64(10+i), 0), Usage: []model.Usage{{Model: "m", Input: 1}}})
+	}
+	if err := st.ReplaceFile(store.FileRow{Path: "/f", Provider: "claude"}, ss); err != nil {
+		t.Fatal(err)
+	}
+	link := func(a, b string) model.Link {
+		return model.Link{A: a, B: b, Source: "rule:test", Confidence: 1}
+	}
+	if err := st.ReplaceRuleLinks([]model.Link{link("claude:c", "claude:x"), link("claude:x", "claude:y"), link("claude:y", "claude:d")}); err != nil {
+		t.Fatal(err)
+	}
+	h := (&Server{Store: st, Threshold: 0.85}).Handler()
+
+	var g groupsResp
+	json.Unmarshal(do(t, h, httptest.NewRequest("GET", "/api/groups", nil)).Body.Bytes(), &g)
+	if len(g.Groups) != 1 {
+		t.Fatalf("setup: want 1 group, got %+v", g)
+	}
+
+	for _, body := range []string{
+		`{"Kind":"merge","A":"claude:c","B":"claude:d"}`,
+		`{"Kind":"detach","A":"claude:x"}`,
+		`{"Kind":"detach","A":"claude:y"}`,
+		`{"Kind":"merge","A":"claude:x","B":"claude:y"}`,
+	} {
+		w := do(t, h, post(body, "", "application/json"))
+		if w.Code != 200 {
+			t.Fatalf("%s: %d %s", body, w.Code, w.Body.String())
+		}
+		g = groupsResp{}
+		json.Unmarshal(w.Body.Bytes(), &g)
+	}
+	if len(g.Groups) != 2 {
+		t.Fatalf("want 2 groups, got %+v", g)
+	}
+	sets := map[string]bool{}
+	for _, gr := range g.Groups {
+		r := append([]string(nil), gr.Roots...)
+		sort.Strings(r)
+		sets[strings.Join(r, ",")] = true
+	}
+	if !sets["claude:c,claude:d"] || !sets["claude:x,claude:y"] {
+		t.Fatalf("groups = %+v", g.Groups)
 	}
 }

@@ -92,12 +92,18 @@ function show(id) {
   $('mg').onclick = () => $('tg').value && decide([{Kind: 'merge', A: anchor, B: $('tg').value}]);
   $('ns').onclick = () => $('tg').value && decide([{Kind: 'nest', A: anchor, B: $('tg').value}]);
   if ($('un')) $('un').onclick = () => decide([{Kind: 'unnest', A: anchor}]);
-  $('dt').onclick = () => decide(sel().map(a => ({Kind: 'detach', A: a})));
-  $('ng').onclick = () => {
+  const split = grouped => {
     const s = sel();
     if (!s.length) return;
-    decide([...s.map(a => ({Kind: 'detach', A: a})), ...s.slice(1).map(a => ({Kind: 'merge', A: s[0], B: a}))]);
+    const rest = g.Sessions.filter(x => !x.Child).map(x => x.ID).filter(id => !s.includes(id));
+    decide([
+      ...rest.slice(1).map(r => ({Kind: 'merge', A: rest[0], B: r})),
+      ...s.map(a => ({Kind: 'detach', A: a})),
+      ...(grouped ? s.slice(1).map(a => ({Kind: 'merge', A: s[0], B: a})) : []),
+    ]);
   };
+  $('dt').onclick = () => split(false);
+  $('ng').onclick = () => split(true);
   document.querySelectorAll('#detail a[data-s]').forEach(a => a.onclick = async e => {
     e.preventDefault();
     const d = await (await fetch('/api/session?id=' + encodeURIComponent(a.dataset.s))).json();
