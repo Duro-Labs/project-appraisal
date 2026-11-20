@@ -11,7 +11,7 @@ import (
 func TestNormalizeRemote(t *testing.T) {
 	cases := map[string]string{
 		"git@github.com:Duro-Labs/Demo.git":     "duro-labs/demo",
-		"https://github.com/acme/x":    "acme/x",
+		"https://github.com/acme/x":             "acme/x",
 		"ssh://git@github.com/o/r.git":          "o/r",
 		"https://gitlab.example.com/team/r.git": "https://gitlab.example.com/team/r",
 	}
