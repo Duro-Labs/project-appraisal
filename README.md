@@ -2,6 +2,8 @@
 
 Measures where AI spend goes. `appraisal sweep` reads every local Claude Code, Codex and Hermes session, links sessions that are the same piece of work, and totals their tokens per group. `appraisal serve` opens a local page to merge, split, nest and rename groups; totals recalculate on every edit.
 
+The **Memory, rules & hooks** tab inventories known agent files from Claude, Codex, Hermes, shared agent configuration, and workspaces seen in session history. It searches names, paths, and file contents. Files can be edited or deleted after a revision check; generated rules and Hermes YAML config are read-only, and hook configuration files cannot be deleted from the tab. Changes to JSON configuration must remain valid JSON. The inventory is read live from local files and is not uploaded.
+
     go build -o appraisal ./cmd/appraisal
     ./appraisal sweep              # incremental; JEV judges uncertain pairs (budget --max-judgments, default 500)
     ./appraisal sweep --no-judge   # rules only, no network

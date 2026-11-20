@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"appraisal/internal/artifact"
 	"appraisal/internal/group"
 	"appraisal/internal/model"
 	"appraisal/internal/store"
@@ -24,6 +25,7 @@ const maxBody = 64 << 10
 type Server struct {
 	Store     *store.Store
 	Threshold float64
+	Artifacts artifact.Config
 }
 
 type sessionView struct {
@@ -52,6 +54,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/groups", s.groups)
 	mux.HandleFunc("GET /api/session", s.session)
 	mux.HandleFunc("POST /api/decisions", s.decide)
+	mux.HandleFunc("GET /api/artifacts", s.artifacts)
+	mux.HandleFunc("GET /api/artifact", s.artifact)
+	mux.HandleFunc("PUT /api/artifact", s.saveArtifact)
+	mux.HandleFunc("DELETE /api/artifact", s.deleteArtifact)
 	return loopbackOnly(mux)
 }
 
