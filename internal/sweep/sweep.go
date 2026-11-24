@@ -23,7 +23,7 @@ import (
 
 type Config struct {
 	ClaudeProjects, CodexHome, HermesHome, VaultRoot, Home string
-	Exclude                                                []string
+	ClaudeArchives, Exclude                                []string
 	Judge                                                  link.Judge
 	MaxJudgments                                           int
 	Threshold                                              float64
@@ -69,6 +69,7 @@ func ingest(st *store.Store, cfg Config, rep *Report) error {
 	if err != nil {
 		return err
 	}
+	claudeFiles = append(claudeFiles, archived(claudeFiles, cfg.ClaudeArchives)...)
 	for _, p := range claudeFiles {
 		p := p
 		fileJob(st, cfg, rep, p, "claude", claude.ParserVersion, func() ([]model.Session, int, error) {
@@ -100,6 +101,24 @@ func ingest(st *store.Store, cfg Config, rep *Report) error {
 		})
 	}
 	return nil
+}
+
+func archived(live, roots []string) []string {
+	seen := map[string]bool{}
+	for _, p := range live {
+		seen[claude.SessionID(p)] = true
+	}
+	var out []string
+	for _, root := range roots {
+		files, _ := claude.Discover(root)
+		for _, p := range files {
+			if id := claude.SessionID(p); !seen[id] {
+				seen[id] = true
+				out = append(out, p)
+			}
+		}
+	}
+	return out
 }
 
 func fileJob(st *store.Store, cfg Config, rep *Report, path, provider string, pv int, parse parseFn) {

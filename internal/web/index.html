@@ -37,7 +37,7 @@ textarea{width:100%;min-height:55vh;resize:vertical;font:13px/1.5 ui-monospace,m
 </style>
 </head>
 <body>
-<header><strong>Project appraisal</strong><button id="tab-sessions" class="active">Sessions</button><button id="tab-artifacts">Memory, rules & hooks</button><input id="search" placeholder="Search names, paths and contents" hidden><span id="sum" class="n"></span></header>
+<header><strong>Project appraisal</strong><button id="tab-sessions" class="active">Sessions</button><button id="tab-artifacts">Memory, rules, skills &amp; hooks</button><input id="search" placeholder="Search names, paths and contents" hidden><span id="sum" class="n"></span></header>
 <main><nav id="tree"></nav><section id="detail"><p class="n">Pick a group.</p></section></main>
 <script>
 const fmt = n => n >= 1e9 ? (n/1e9).toFixed(2)+'B' : n >= 1e6 ? (n/1e6).toFixed(1)+'M' : n >= 1e3 ? (n/1e3).toFixed(1)+'k' : String(n);
@@ -148,13 +148,13 @@ async function loadArtifacts() {
   document.getElementById('sum').textContent = `${items.length} matching items`;
   renderArtifacts();
   if (selectedArtifact && items.some(item => item.ID === selectedArtifact)) showArtifact(selectedArtifact);
-  else { selectedArtifact = null; openedArtifact = null; document.getElementById('detail').innerHTML = '<p class="n">Pick a memory, rule or hook.</p>'; }
+  else { selectedArtifact = null; openedArtifact = null; document.getElementById('detail').innerHTML = '<p class="n">Pick a memory, rule, skill or hook.</p>'; }
 }
 
 function renderArtifacts() {
   const tree = document.getElementById('tree');
   const out = [];
-  for (const kind of ['memory', 'rule', 'hook']) {
+  for (const kind of ['memory', 'rule', 'skill', 'hook']) {
     const matching = items.filter(item => item.Kind === kind);
     if (!matching.length) continue;
     out.push(`<div class="kind">${kind}s (${matching.length})</div>`);

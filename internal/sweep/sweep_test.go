@@ -196,3 +196,34 @@ func TestRunStopsOnInFlightCancel(t *testing.T) {
 		t.Fatalf("calls=%d report=%+v, want 1 call and JudgeErrors 0", j.calls, rep)
 	}
 }
+
+func TestArchiveRootsAddSessionsWithoutStealingLiveOnes(t *testing.T) {
+	cfg, st := setup(t)
+	archive := filepath.Join(cfg.Home, "archive", "projects")
+	for rel, body := range map[string]string{
+		"old/s1.jsonl":   claudeLine("/nowhere/stale", "", "2026-10-01T10:00:00Z", "r1", "stale copy of s1"),
+		"old/gone.jsonl": claudeLine("/nowhere/gone", "", "2026-10-02T10:00:00Z", "rg", "only in the archive"),
+	} {
+		p := filepath.Join(archive, rel)
+		os.MkdirAll(filepath.Dir(p), 0o755)
+		os.WriteFile(p, []byte(body), 0o644)
+	}
+	cfg.ClaudeArchives = []string{archive}
+	if _, err := Run(context.Background(), st, cfg); err != nil {
+		t.Fatal(err)
+	}
+	in, _, err := Load(st, cfg.Threshold)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byID := map[string]string{}
+	for _, s := range in.Sessions {
+		byID[s.ID] = s.Cwd
+	}
+	if _, ok := byID["claude:gone"]; !ok {
+		t.Fatal("archive-only session was not ingested")
+	}
+	if byID["claude:s1"] != "/nowhere/gittrees/demo/feat-x" {
+		t.Fatalf("archive copy replaced the live session: cwd = %q", byID["claude:s1"])
+	}
+}

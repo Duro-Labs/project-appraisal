@@ -61,6 +61,7 @@ func main() {
 		hermesHome := envOr("HERMES_HOME", defaultHermesHome(home, dataHome))
 		cfg := sweep.Config{
 			ClaudeProjects: filepath.Join(envOr("CLAUDE_CONFIG_DIR", filepath.Join(home, ".claude")), "projects"),
+			ClaudeArchives: claudeArchives(*data),
 			CodexHome:      envOr("CODEX_HOME", filepath.Join(home, ".codex")),
 			HermesHome:     hermesHome,
 			VaultRoot:      *vault,
@@ -110,6 +111,18 @@ func main() {
 		os.Exit(2)
 	}
 }
+
+func claudeArchives(data string) []string {
+	var roots []string
+	for _, dir := range glob(filepath.Join(data, "archives", "claude", "*")) {
+		if dirExists(filepath.Join(dir, "projects")) {
+			roots = append(roots, filepath.Join(dir, "projects"))
+		}
+	}
+	return roots
+}
+
+func glob(pattern string) []string { paths, _ := filepath.Glob(pattern); return paths }
 
 func loopback(addr string) bool {
 	host, _, err := net.SplitHostPort(addr)

@@ -84,3 +84,38 @@ func TestSaveChecksRevisionAndDeleteRemovesOnlyListedFile(t *testing.T) {
 		t.Fatalf("arbitrary id = %v", err)
 	}
 }
+
+func TestInventoryListsSkillsFromGlobalAndWorkspaceDirs(t *testing.T) {
+	root := t.TempDir()
+	claude := filepath.Join(root, "claude")
+	shared := filepath.Join(root, "agents")
+	workspace := filepath.Join(root, "client", "repo")
+	write(t, filepath.Join(claude, "skills", "deploy", "SKILL.md"), "deploy")
+	write(t, filepath.Join(shared, "skills", "triage", "SKILL.md"), "triage")
+	write(t, filepath.Join(root, "client", ".claude", "skills", "review", "SKILL.md"), "review")
+	write(t, filepath.Join(root, "client", ".agents", "skills", "notes", "SKILL.md"), "notes")
+	write(t, filepath.Join(workspace, "skills", "pack", "SKILL.md"), "pack")
+	write(t, filepath.Join(workspace, ".claude", "skills", "review", "helper.md"), "not a skill entry")
+	items, err := List(Config{ClaudeHome: claude, SharedHome: shared, Workspaces: []string{workspace}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := map[string]bool{}
+	for _, item := range items {
+		if item.Kind != "skill" {
+			t.Fatalf("unexpected item %+v", item)
+		}
+		if item.Deletable {
+			t.Fatalf("skill %s must not be deletable from the tab", item.Name)
+		}
+		names[item.Name] = true
+	}
+	for _, want := range []string{"deploy", "triage", "review", "notes", "pack"} {
+		if !names[want] {
+			t.Fatalf("missing skill %q in %+v", want, items)
+		}
+	}
+	if len(items) != 5 {
+		t.Fatalf("items = %+v", items)
+	}
+}
