@@ -108,6 +108,8 @@ func ParseFile(path string) (model.Session, int, error) {
 	return p.s, p.skipped, nil
 }
 
+func SessionID(path string) string { id, _ := ids(path); return id }
+
 func ids(path string) (id, parent string) {
 	base := strings.TrimSuffix(filepath.Base(path), ".jsonl")
 	dir := filepath.Dir(path)

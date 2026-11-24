@@ -13,7 +13,10 @@ import (
 	"time"
 )
 
-const maxContent = 256 << 10
+const (
+	maxContent    = 256 << 10
+	maxSkillDepth = 2
+)
 
 var (
 	ErrNotFound       = errors.New("item not found")
@@ -98,6 +101,34 @@ func List(cfg Config) ([]Item, error) {
 			add(filepath.Join(dir, name), kind, provider, scope, true, true)
 		}
 	}
+	var addSkills func(dir, provider, scope string, depth int)
+	addSkills = func(dir, provider, scope string, depth int) {
+		if dir == "" || depth > maxSkillDepth {
+			return
+		}
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			return
+		}
+		for _, entry := range entries {
+			sub := filepath.Join(dir, entry.Name())
+			if info, err := os.Stat(sub); err != nil || !info.IsDir() || entry.Name() == "node_modules" {
+				continue
+			}
+			skill := filepath.Join(sub, "SKILL.md")
+			if _, err := os.Stat(skill); err != nil {
+				addSkills(sub, provider, scope, depth+1)
+				continue
+			}
+			add(skill, "skill", provider, scope, true, false)
+			if canonical, err := filepath.EvalSymlinks(skill); err == nil {
+				if item, ok := items[canonical]; ok && item.Kind == "skill" {
+					item.Name = entry.Name()
+					items[canonical] = item
+				}
+			}
+		}
+	}
 	for _, spec := range []struct {
 		path, kind, provider, scope string
 		editable, deletable         bool
@@ -121,6 +152,10 @@ func List(cfg Config) ([]Item, error) {
 	addDir(under(cfg.CodexHome, "hooks"), "hook", "Codex", "Global")
 	addDir(under(cfg.HermesHome, "memories"), "memory", "Hermes", "Global")
 	addDir(under(cfg.HermesHome, "hooks"), "hook", "Hermes", "Global")
+	addSkills(under(cfg.SharedHome, "skills"), "Shared", "Global", 0)
+	addSkills(under(cfg.ClaudeHome, "skills"), "Claude", "Global", 0)
+	addSkills(under(cfg.CodexHome, "skills"), "Codex", "Global", 0)
+	addSkills(under(cfg.HermesHome, "skills"), "Hermes", "Global", 0)
 	for _, project := range glob(under(cfg.ClaudeHome, "projects", "*")) {
 		addDir(filepath.Join(project, "memory"), "memory", "Claude", filepath.Base(project))
 	}
@@ -155,6 +190,10 @@ func List(cfg Config) ([]Item, error) {
 			addDir(filepath.Join(dir, ".claude", "hooks"), "hook", "Claude", dir)
 			addDir(filepath.Join(dir, ".codex", "hooks"), "hook", "Codex", dir)
 			addDir(filepath.Join(dir, ".hermes", "hooks"), "hook", "Hermes", dir)
+			addSkills(filepath.Join(dir, ".claude", "skills"), "Claude", dir, 0)
+			addSkills(filepath.Join(dir, ".agents", "skills"), "Shared", dir, 0)
+			addSkills(filepath.Join(dir, ".codex", "skills"), "Codex", dir, 0)
+			addSkills(filepath.Join(dir, "skills"), "Project", dir, 0)
 		}
 	}
 	out := make([]Item, 0, len(items))

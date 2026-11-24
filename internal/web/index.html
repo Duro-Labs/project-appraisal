@@ -37,17 +37,17 @@ textarea{width:100%;min-height:55vh;resize:vertical;font:13px/1.5 ui-monospace,m
 </style>
 </head>
 <body>
-<header><strong>Project appraisal</strong><button id="tab-sessions" class="active">Sessions</button><button id="tab-artifacts">Memory, rules & hooks</button><input id="search" placeholder="Search names, paths and contents" hidden><span id="sum" class="n"></span></header>
+<header><strong>Project appraisal</strong><button id="tab-sessions" class="active">Sessions</button><button class="tab-kind" data-kind="memory">Memory</button><button class="tab-kind" data-kind="rule">Rules</button><button class="tab-kind" data-kind="skill">Skills</button><button class="tab-kind" data-kind="hook">Hooks</button><input id="search" placeholder="Search names, paths and contents" hidden><span id="sum" class="n"></span></header>
 <main><nav id="tree"></nav><section id="detail"><p class="n">Pick a group.</p></section></main>
 <script>
 const fmt = n => n >= 1e9 ? (n/1e9).toFixed(2)+'B' : n >= 1e6 ? (n/1e6).toFixed(1)+'M' : n >= 1e3 ? (n/1e3).toFixed(1)+'k' : String(n);
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const label = g => g.Name || g.Suggested || g.ID;
 let groups = [], byId = {}, current = null;
-let tab = 'sessions', items = [], selectedArtifact = null, openedArtifact = null, searchTimer;
+let tab = 'sessions', kind = 'memory', items = [], selectedArtifact = null, openedArtifact = null, searchTimer;
 
 document.getElementById('tab-sessions').onclick = () => switchTab('sessions');
-document.getElementById('tab-artifacts').onclick = () => switchTab('artifacts');
+document.querySelectorAll('.tab-kind').forEach(el => el.onclick = () => { kind = el.dataset.kind; selectedArtifact = null; switchTab('artifacts'); });
 document.getElementById('search').oninput = () => {
   clearTimeout(searchTimer);
   searchTimer = setTimeout(loadArtifacts, 180);
@@ -56,7 +56,7 @@ document.getElementById('search').oninput = () => {
 function switchTab(next) {
   tab = next;
   document.getElementById('tab-sessions').classList.toggle('active', tab === 'sessions');
-  document.getElementById('tab-artifacts').classList.toggle('active', tab === 'artifacts');
+  document.querySelectorAll('.tab-kind').forEach(el => el.classList.toggle('active', tab === 'artifacts' && el.dataset.kind === kind));
   document.getElementById('search').hidden = tab !== 'artifacts';
   if (tab === 'artifacts') loadArtifacts(); else load();
 }
@@ -144,20 +144,24 @@ async function loadArtifacts() {
   if (!r.ok) { document.getElementById('detail').textContent = await r.text(); return; }
   const data = await r.json();
   if (tab !== 'artifacts' || query !== document.getElementById('search').value.trim()) return;
-  items = data.items || [];
+  const all = data.items || [];
+  items = all.filter(item => item.Kind === kind);
+  document.querySelectorAll('.tab-kind').forEach(el => {
+    const n = all.filter(item => item.Kind === el.dataset.kind).length;
+    el.textContent = el.textContent.replace(/ \(\d+\)$/, '') + ` (${n})`;
+  });
   document.getElementById('sum').textContent = `${items.length} matching items`;
   renderArtifacts();
   if (selectedArtifact && items.some(item => item.ID === selectedArtifact)) showArtifact(selectedArtifact);
-  else { selectedArtifact = null; openedArtifact = null; document.getElementById('detail').innerHTML = '<p class="n">Pick a memory, rule or hook.</p>'; }
+  else { selectedArtifact = null; openedArtifact = null; document.getElementById('detail').innerHTML = `<p class="n">Pick a ${kind === 'memory' ? 'memory file' : kind}.</p>`; }
 }
 
 function renderArtifacts() {
   const tree = document.getElementById('tree');
   const out = [];
-  for (const kind of ['memory', 'rule', 'hook']) {
-    const matching = items.filter(item => item.Kind === kind);
-    if (!matching.length) continue;
-    out.push(`<div class="kind">${kind}s (${matching.length})</div>`);
+  for (const provider of [...new Set(items.map(item => item.Provider))]) {
+    const matching = items.filter(item => item.Provider === provider);
+    out.push(`<div class="kind">${esc(provider)} (${matching.length})</div>`);
     out.push(...matching.map(item => `<button class="artifact-row${item.ID === selectedArtifact ? ' on' : ''}" data-id="${esc(item.ID)}"><strong>${esc(item.Name)}</strong><small>${esc(item.Provider)} · ${esc(item.Scope)}</small></button>`));
   }
   tree.innerHTML = out.join('') || '<p class="n" style="padding:0 16px">No matching items.</p>';
